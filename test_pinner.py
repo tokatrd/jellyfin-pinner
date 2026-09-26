@@ -1,17 +1,55 @@
-"""Smoke: mismatch exits 1, match exits 0."""
+"""Smoke: mismatch=1, match=0, unknown/missing=2. Uses temp files, not the repo dir."""
 
-import os, subprocess, pathlib
+import os, json, subprocess, pathlib, tempfile
 
 os.chdir(pathlib.Path(__file__).parent)
 
-
-r = subprocess.run(["python3", "pinner.py", "10.9.11", "plugins.sample.json"])
-assert r.returncode == 1, "expected mismatch for 10.9 vs 0.1.16.0"
-match = pathlib.Path("plugins.match.json")
-match.write_text('{"intro_skipper": "0.1.18.0"}')
+tmp = pathlib.Path(tempfile.mkdtemp())
 try:
-    r2 = subprocess.run(["python3", "pinner.py", "10.9.11", "plugins.match.json"])
-    assert r2.returncode == 0, "expected match for 10.9 vs 0.1.18.0"
+    (tmp / "mis.json").write_text('{"intro_skipper": "0.1.16.0"}')
+    r = subprocess.run(
+        ["python3", "pinner.py", "10.9.11", str(tmp / "mis.json")],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 1 and "PIN intro_skipper" in r.stdout, (
+        r.returncode,
+        r.stdout,
+    )
+
+    (tmp / "ok.json").write_text('{"intro_skipper": "0.1.18.0"}')
+    r = subprocess.run(
+        ["python3", "pinner.py", "10.9.11", str(tmp / "ok.json")],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0 and "OK intro_skipper" in r.stdout, (
+        r.returncode,
+        r.stdout,
+    )
+
+    r = subprocess.run(
+        ["python3", "pinner.py", "11.0.0", str(tmp / "ok.json")],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 2 and "WARN" in r.stdout, (r.returncode, r.stdout)
+
+    r = subprocess.run(
+        ["python3", "pinner.py", "10.9.11", str(tmp / "nope.json")],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 2 and "ERROR" in r.stderr, (r.returncode, r.stderr)
+
+    r = subprocess.run(
+        ["python3", "pinner.py", "10.9.11", str(tmp / "ok.json")],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0
+    print("jellyfin-pinner smoke OK")
 finally:
-    match.unlink()
-print("jellyfin-pinner smoke OK")
+    for p in tmp.glob("*"):
+        p.unlink()
+    tmp.rmdir()
